@@ -22,16 +22,42 @@
       margin: 0;
       padding: 0;
       box-sizing: border-box;
+      grid-auto-rows: 1fr;
     }
     .tile {
       position: relative;
-      /* fill cell entirely */
       width: 100%;
       height: 100%;
       overflow: hidden;
       background: #222;
       border-radius: 50px;
       cursor: pointer;
+    }
+    /* SVG hover border overlay */
+    .hover-border {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 2;
+      pointer-events: none;
+    }
+    .hover-border rect {
+      fill: none;
+      stroke: #fff;
+      stroke-width: 2px;           /* larger dots */
+      stroke-linecap: round;
+      stroke-dasharray: 0 10px;     /* more dots around edge */
+      stroke-opacity: 0;
+      vector-effect: non-scaling-stroke;
+    }
+    .tile:hover .hover-border rect {
+      stroke-opacity: 1;
+      animation: dash 0.2s linear infinite;
+    }
+    @keyframes dash {
+      to { stroke-dashoffset: -8; }
     }
     canvas {
       position: absolute;
@@ -40,11 +66,11 @@
       width: 100% !important;
       height: 100% !important;
       display: block;
+      z-index: 1;
     }
   </style>
 </head>
 <body>
-  
   <div id="gallery"></div>
 
   <script type="module">
@@ -54,6 +80,7 @@
     const gallery = document.getElementById('gallery');
     gallery.innerHTML = '';
     const defaultFiles = ['modelA.ply', 'modelB.ply'];
+
     fetch('./models/models.json')
       .then(res => res.ok ? res.json() : Promise.reject('Manifest not found'))
       .catch(() => defaultFiles)
@@ -63,13 +90,34 @@
         const rows = Math.ceil(count / cols);
         gallery.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
         gallery.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
+
         files.forEach(fileName => {
           const tile = document.createElement('div');
           tile.className = 'tile';
           tile.onclick = () => window.location.href = `viewer.html?ply=${encodeURIComponent(fileName)}`;
+
+          // SVG border overlay matching CSS radius
+          const svgNS = 'http://www.w3.org/2000/svg';
+          const svg = document.createElementNS(svgNS, 'svg');
+          svg.classList.add('hover-border');
+          svg.setAttribute('width', '100%');
+          svg.setAttribute('height', '100%');
+          const rect = document.createElementNS(svgNS, 'rect');
+          rect.setAttribute('x', '0');
+          rect.setAttribute('y', '0');
+          rect.setAttribute('width', '100%');
+          rect.setAttribute('height', '100%');
+          // match CSS border-radius: 50px
+          rect.setAttribute('rx', '50');
+          rect.setAttribute('ry', '50');
+          svg.appendChild(rect);
+          tile.appendChild(svg);
+
+          // create preview canvas
           const canvas = document.createElement('canvas');
           tile.appendChild(canvas);
           gallery.appendChild(tile);
+
           initTilePreview(canvas, fileName);
         });
       });
@@ -77,8 +125,9 @@
     function initTilePreview(canvas, file) {
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
       const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth/canvas.clientHeight, 0.1, 100);
+      const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
       renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+
       const ro = new ResizeObserver(entries => {
         for (let entry of entries) {
           const { width, height } = entry.contentRect;
@@ -95,18 +144,20 @@
         geometry => {
           geometry.computeVertexNormals();
           if (!geometry.getAttribute('color')) {
-            const count = geometry.getAttribute('position').count;
-            const cols = new Float32Array(count*3).fill(1);
-            geometry.setAttribute('color', new THREE.BufferAttribute(cols,3));
+            const c = geometry.getAttribute('position').count;
+            const cols = new Float32Array(c * 3).fill(1);
+            geometry.setAttribute('color', new THREE.BufferAttribute(cols, 3));
           }
           const material = new THREE.PointsMaterial({ size: 0.01, vertexColors: true, sizeAttenuation: true });
           const points = new THREE.Points(geometry, material);
           const center = geometry.boundingSphere ? geometry.boundingSphere.center : new THREE.Vector3();
           points.position.sub(center);
           scene.add(points);
+
           const radius = geometry.boundingSphere ? geometry.boundingSphere.radius : 1;
-          camera.position.set(0,0,radius*2.0);
-          camera.lookAt(0,0,0);
+          camera.position.set(0, 0, radius * 2.0);
+          camera.lookAt(0, 0, 0);
+
           function animate() {
             requestAnimationFrame(animate);
             points.rotation.y += 0.005;

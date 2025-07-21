@@ -1,79 +1,46 @@
 <!DOCTYPE html>
-<!-- Declare HTML5 document -->
 <html lang="en">
 <head>
-  <!-- Set character encoding and responsive viewport -->
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Three.js PLY Point Cloud Viewer</title>
   <style>
-    /* Ensure zero margins, full-screen canvas, black background */
-    html, body {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      background: #000;
-      border-radius: 0px;
-      overflow: hidden;
+    /* Apply Courier across all UI elements */
+    html, body, button, .dg, .dg * {
+      font-family: 'Courier New', Courier, monospace !important;
     }
-    /* Remove inline-block spacing, fill parent */
-    canvas {
-      display: block;
-    }
-    /* "Back" button styling */
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; }
     #back {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      z-index: 10;
-      padding: 6px 12px;
-      background: #000;
-      color: #fff;
-      border-radius: 4px;
-      cursor: pointer;
-      user-select: none;
-      font-family: sans-serif;
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      padding: 6px 12px; background: #000; color: #fff;
+      border-radius: 4px; cursor: pointer; user-select: none;
     }
   </style>
 </head>
 <body>
-  <!-- Button to return to gallery -->
   <div id="back">← Gallery</div>
-
   <script type="module">
-    // Import core Three.js, controls, PLY loader, and dat.GUI for UI
     import * as THREE from 'https://esm.sh/three@0.150.1';
     import { OrbitControls } from 'https://esm.sh/three@0.150.1/examples/jsm/controls/OrbitControls.js';
     import { PLYLoader } from 'https://esm.sh/three@0.150.1/examples/jsm/loaders/PLYLoader.js';
     import { GUI } from 'https://cdn.jsdelivr.net/npm/dat.gui@0.7.7/build/dat.gui.module.js';
 
-    // Read URL query parameters to determine which PLY file to load
     const params = new URLSearchParams(window.location.search);
     const fileParam = params.get('id') || params.get('ply');
     if (!fileParam) {
-      // No file specified: redirect back to index
       window.location.href = 'index.html';
-      throw new Error('Redirecting to gallery');
+      throw new Error('No PLY specified');
     }
     const plyFile = `models/${fileParam}`;
 
-    // Wire up "Back" button
-    document.getElementById('back').onclick = () => window.location.href = 'index.html';
-
-    // Declare global variables for Three.js scene
     let scene, camera, renderer, controls, clock;
     let points, material;
     let origPositions, origColors, origCount;
-    let orbiting = false, orbitAngle = 0;
-    const orbitDuration = 8;                // Seconds for half rotation
-    const maxOrbitAngle = Math.PI;          // 180° max for ping-pong effect
-    const startOrbitAngle = -Math.PI / 2;   // Start behind object
-    const revealDuration = 5;               // Seconds to reveal full point cloud
-    let idleTimeout;
-    const idleDelay = 6000; // 6 seconds before auto-orbit
+    let orbiting = false;
+    const orbitDuration = 8, maxOrbitAngle = Math.PI, revealDuration = 5;
+    let idleTimeout; const idleDelay = 6000;
 
-    // Settings for GUI controls
     const guiParams = {
       pointSize: 0.005,
       vertexColors: true,
@@ -84,279 +51,168 @@
       density: 0
     };
 
-    // Initialize scene and start render loop
-    init();
-    animate();
+    init(); animate();
 
     function init() {
-      // Create scene and perspective camera
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(
-        75,
-        window.innerWidth / window.innerHeight,
-        0.1,
-        1000
-      );
-      // Renderer with antialiasing
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
 
-      // Orbit controls for user interaction
       controls = new OrbitControls(camera, renderer.domElement);
-      function resetIdleTimer() {
-        orbiting = false;
-        clearTimeout(idleTimeout);
-        idleTimeout = setTimeout(() => { orbiting = true; }, idleDelay);
-      }
-      // Stop auto-orbit when user interacts
-      controls.addEventListener('start', () => { orbiting = false; });
-      controls.addEventListener('end', resetIdleTimer);
-      // Reset timer on any user event
-      ['mousedown', 'wheel', 'touchstart', 'keydown'].forEach(evt =>
-        window.addEventListener(evt, resetIdleTimer)
-      );
+      const resetIdle = () => { orbiting = false; clearTimeout(idleTimeout); idleTimeout = setTimeout(() => orbiting = true, idleDelay); };
+      controls.addEventListener('start', () => orbiting = false);
+      controls.addEventListener('end', resetIdle);
+      ['mousedown','wheel','touchstart','keydown'].forEach(e => window.addEventListener(e, resetIdle));
 
-      // Clock for animations
       clock = new THREE.Clock();
 
-      // GUI to tweak parameters at runtime
       const gui = new GUI();
       gui.add(guiParams, 'pointSize', 0.001, 0.1).name('Point Size').onChange(updateMaterial);
       gui.add(guiParams, 'vertexColors').name('Vertex Colors').onChange(updateMaterial);
       gui.add(guiParams, 'sizeAttenuation').name('Size Attenuation').onChange(updateMaterial);
-      gui.add(guiParams, 'shadingIntensity', 0.1, 3.0).name('Shading').onChange(updateMaterial);
-      gui.add(guiParams, 'revealNoise', 0.0, 0.5).name('Reveal Noise').onChange(updateMaterial);
-      gui.addColor(guiParams, 'bgColor').name('Background')
-        .onChange(v => scene.background = new THREE.Color(v));
-      gui.add(guiParams, 'density', 0, 20, 1).name('Density').onChange(v => densifyGeometry(v));
+      gui.add(guiParams, 'shadingIntensity', 0.1, 3).name('Shading').onChange(updateMaterial);
+      gui.add(guiParams, 'revealNoise', 0, 0.5).name('Reveal Noise').onChange(updateMaterial);
+      gui.addColor(guiParams, 'bgColor').name('Background').onChange(v => scene.background = new THREE.Color(v));
+      gui.add(guiParams, 'density', 0, 20, 1).name('Density').onChange(densifyGeometry);
       scene.background = new THREE.Color(guiParams.bgColor);
 
-      // Handle window resize
       window.addEventListener('resize', onResize);
-      // Load PLY model
-      new PLYLoader().load(
-        plyFile,
-        onLoad,
-        undefined,
-        err => console.error('Error loading PLY:', err)
-      );
+
+      new PLYLoader().load(plyFile, onLoad, undefined, err => console.error('Error loading PLY:', err));
+      document.getElementById('back').onclick = () => window.location.href = 'index.html';
     }
 
     function onLoad(geometry) {
-      // Precompute normals and bounds
-      geometry.computeVertexNormals();
-      geometry.computeBoundingSphere();
-      geometry.computeBoundingBox();
-
-      // Store original vertex positions and colors
-      const posAttr = geometry.getAttribute('position');
-      origCount = posAttr.count;
+      geometry.computeVertexNormals(); geometry.computeBoundingSphere();
+      const posAttr = geometry.getAttribute('position'); origCount = posAttr.count;
       origPositions = posAttr.array.slice();
-      // Use white if no colors present
-      origColors = geometry.getAttribute('color')
-        ? geometry.getAttribute('color').array.slice()
-        : new Float32Array(origCount * 3).fill(1);
+      origColors = geometry.getAttribute('color') ? geometry.getAttribute('color').array.slice() : new Float32Array(origCount * 3).fill(1);
 
-      // Create initial point cloud geometry with GUI density
       densifyGeometry(guiParams.density);
 
-      // Compute reveal direction and bounds along that axis
-      const dir = new THREE.Vector3(1, 0, 1).normalize();
+      const dir = new THREE.Vector3(1,0,1).normalize();
       let minD = Infinity, maxD = -Infinity;
-      const positions = points.geometry.getAttribute('position');
-      for (let i = 0; i < positions.count; i++) {
-        const p = new THREE.Vector3(
-          positions.getX(i),
-          positions.getY(i),
-          positions.getZ(i)
-        );
-        const d = p.dot(dir);
+      const posArr = points.geometry.getAttribute('position');
+      for(let i=0;i<posArr.count;i++){
+        const v = new THREE.Vector3(posArr.getX(i), posArr.getY(i), posArr.getZ(i));
+        const d = v.dot(dir);
         minD = Math.min(minD, d);
         maxD = Math.max(maxD, d);
       }
 
-      // Frame object in view
       const center = points.geometry.boundingSphere.center;
-      const radius = points.geometry.boundingSphere.radius * 1.7;
-      camera.position.copy(center).add(new THREE.Vector3(0, 0, radius));
-      controls.target.copy(center);
-      controls.update();
+      const radius = points.geometry.boundingSphere.radius;
+      camera.position.copy(center).add(new THREE.Vector3(0,0,radius*1.7));
+      controls.target.copy(center); controls.update();
 
-      // Create and assign custom shader material for reveal effect
       material = createRevealMaterial(dir, minD, maxD);
       points.material = material;
-      // Start reveal at zero
       material.uniforms.uReveal.value = 0;
-      orbitAngle = startOrbitAngle;
-      clock.start();
-      orbiting = true;
+      clock.start(); orbiting = true;
     }
 
-    // Add extra randomized points to simulate density control
     function densifyGeometry(density) {
       const count = origCount;
       const newCount = count * (1 + density);
-      const positions = new Float32Array(newCount * 3);
-      const colors = new Float32Array(newCount * 3);
-      let src = 0, dst = 0;
-      for (let i = 0; i < count; i++) {
-        // Copy original point
-        positions.set(origPositions.subarray(src, src + 3), dst);
-        colors.set(origColors.subarray(src, src + 3), dst);
-        dst += 3;
-        // Insert extra jittered copies
-        for (let j = 0; j < density; j++) {
-          positions[dst]     = origPositions[src]     + (Math.random() - 0.5) * 0.005;
-          positions[dst + 1] = origPositions[src + 1] + (Math.random() - 0.5) * 0.005;
-          positions[dst + 2] = origPositions[src + 2] + (Math.random() - 0.5) * 0.005;
-          colors.set(origColors.subarray(src, src + 3), dst);
-          dst += 3;
+      const positions = new Float32Array(newCount*3);
+      const colors    = new Float32Array(newCount*3);
+      let src=0,dst=0;
+      for(let i=0;i<count;i++){
+        positions.set(origPositions.subarray(src,src+3), dst);
+        colors.set(origColors.subarray(src,src+3), dst); dst+=3;
+        for(let j=0;j<density;j++){
+          positions[dst]   = origPositions[src]   + (Math.random()-0.5)*0.01;
+          positions[dst+1] = origPositions[src+1] + (Math.random()-0.5)*0.01;
+          positions[dst+2] = origPositions[src+2] + (Math.random()-0.5)*0.01;
+          colors.set(origColors.subarray(src,src+3), dst); dst+=3;
         }
-        src += 3;
+        src+=3;
       }
-      // Build or update buffer geometry
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+      const geo=new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+      geo.setAttribute('color',    new THREE.BufferAttribute(colors,3));
       geo.computeBoundingSphere();
-      if (points) {
-        points.geometry.dispose();
-        points.geometry = geo;
-      } else {
-        points = new THREE.Points(geo, null);
-        scene.add(points);
-      }
+      if(points){ points.geometry.dispose(); points.geometry=geo; }
+      else{ points = new THREE.Points(geo, null); scene.add(points); }
     }
 
-    // Create shader material with reveal & noise effects
     function createRevealMaterial(dir, minD, maxD) {
-      const scale =
-        window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-      // Preprocessor defines based on GUI
-      const defs = {};
-      if (guiParams.sizeAttenuation) defs.USE_SIZE_ATTENUATION = '';
-      if (guiParams.vertexColors)  defs.USE_VERTEX_COLORS     = '';
+      const scale = window.innerHeight/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov)/2));
+      const defs={}; if(guiParams.sizeAttenuation) defs.USE_SIZE_ATTENUATION='';
+      if(guiParams.vertexColors) defs.USE_VERTEX_COLORS='';
       return new THREE.ShaderMaterial({
-        defines: defs,
-        transparent: true,
-        uniforms: {
-          uSize:   { value: guiParams.pointSize },
-          uScale:  { value: scale },
-          uShade:  { value: guiParams.shadingIntensity },
-          uDir:    { value: dir },
-          uMin:    { value: minD },
-          uMax:    { value: maxD },
-          uReveal: { value: 0 },
-          uNoise:  { value: guiParams.revealNoise }
+        defines:defs, transparent:true,
+        uniforms:{
+          uSize:{value:guiParams.pointSize},uScale:{value:scale},uShade:{value:guiParams.shadingIntensity},
+          uDir:{value:dir},uMin:{value:minD},uMax:{value:maxD},uReveal:{value:0},uNoise:{value:guiParams.revealNoise}
         },
-        vertexShader: `
-          uniform vec3 uDir;
-          uniform float uSize;
-          uniform float uScale;
-          varying vec3 vColor;
-          varying float vDot;
-          void main() {
-            vColor = color;
-            vDot = dot(position, uDir);
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_Position = projectionMatrix * mv;
+        vertexShader:`
+          uniform vec3 uDir; uniform float uSize; uniform float uScale;
+          varying vec3 vColor; varying float vDot;
+          void main(){ vColor=color; vDot=dot(position,uDir);
+            vec4 mv=modelViewMatrix*vec4(position,1.0); gl_Position=projectionMatrix*mv;
             #ifdef USE_SIZE_ATTENUATION
-              gl_PointSize = uSize * (uScale / -mv.z);
+              gl_PointSize=uSize*(uScale/-mv.z);
             #else
-              gl_PointSize = uSize;
+              gl_PointSize=uSize;
             #endif
           }
         `,
-        fragmentShader: `
+        fragmentShader:`
           precision highp float;
-          varying vec3 vColor;
-          varying float vDot;
-          uniform float uShade;
-          uniform float uMin;
-          uniform float uMax;
-          uniform float uReveal;
-          uniform float uNoise;
-          void main() {
-            // Normalize position along reveal axis
-            float t = (vDot - uMin) / (uMax - uMin);
-            // Procedural noise for jitter
-            float rnd = fract(sin(vDot * 12.9898) * 43758.5453);
-            float noisyT = t + (rnd * 2.0 - 1.0) * uNoise;
-            // Discard points beyond reveal threshold
-            if (noisyT > uReveal) discard;
-            // Clip to circular point shape
-            vec2 c = gl_PointCoord - vec2(0.5);
-            if (dot(c, c) > 0.25) discard;
-            // Glow effect at reveal edge
-            float glow = smoothstep(uReveal - uNoise, uReveal, t)
-              * (1.0 - smoothstep(uReveal, uReveal + uNoise, t));
-            float shade = uShade + glow * uShade;
+          varying vec3 vColor; varying float vDot;
+          uniform float uShade,uMin,uMax,uReveal,uNoise;
+          void main(){
+            float t=(vDot-uMin)/(uMax-uMin);
+            float rnd=fract(sin(vDot*12.9898)*43758.5453);
+            float noisyT=t+(rnd*2.0-1.0)*uNoise;
+            if(noisyT>uReveal) discard;
+            vec2 c=gl_PointCoord-vec2(0.5);
+            if(dot(c,c)>0.25) discard;
+            float glow=smoothstep(uReveal-uNoise,uReveal,t)*(1.0-smoothstep(uReveal,uReveal+uNoise,t));
+            float shade=uShade+glow*uShade;
             #ifdef USE_VERTEX_COLORS
-              gl_FragColor = vec4(vColor * shade, 1.0);
+              gl_FragColor=vec4(vColor*shade,1.0);
             #else
-              gl_FragColor = vec4(vec3(shade), 1.0);
+              gl_FragColor=vec4(vec3(shade),1.0);
             #endif
           }
         `,
-        vertexColors: true,
-        depthTest:    true
+        vertexColors:true, depthTest:true
       });
     }
 
-    // Recreate material when GUI params change
-    function updateMaterial() {
-      if (!points) return;
-      const dir  = material.uniforms.uDir.value;
-      const minD = material.uniforms.uMin.value;
-      const maxD = material.uniforms.uMax.value;
-      const rev  = material.uniforms.uReveal.value;
-      material.dispose();
-      material = createRevealMaterial(dir, minD, maxD);
-      material.uniforms.uReveal.value = rev;
-      points.material = material;
+    function updateMaterial(){
+      if(!points) return;
+      const dir=material.uniforms.uDir.value;
+      const minD=material.uniforms.uMin.value;
+      const maxD=material.uniforms.uMax.value;
+      const rev=material.uniforms.uReveal.value;
+      material.dispose(); material=createRevealMaterial(dir,minD,maxD); material.uniforms.uReveal.value=rev; points.material=material;
     }
 
-    // Adjust camera & renderer on window resize
-    function onResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      if (material) {
-        material.uniforms.uScale.value =
-          window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
-      }
+    function onResize(){
+      camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth,window.innerHeight);
+      if(material) material.uniforms.uScale.value=window.innerHeight/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov)/2));
     }
 
-    // Render loop: auto-orbit, reveal animation, and draw
-    function animate() {
+    function animate(){
       requestAnimationFrame(animate);
-      const dt = clock.getDelta();
-      if (orbiting) {
-        // Compute new camera angle around target
-        const tx = controls.target.x, tz = controls.target.z;
-        const cx = camera.position.x - tx;
-        const cz = camera.position.z - tz;
-        const currentAngle = Math.atan2(cz, cx);
-        const angularSpeed = maxOrbitAngle / orbitDuration;
-        const newAngle = currentAngle + angularSpeed * dt;
-        const radius = Math.sqrt(cx * cx + cz * cz);
-        camera.position.set(
-          tx + Math.cos(newAngle) * radius,
-          camera.position.y,
-          tz + Math.sin(newAngle) * radius
-        );
+      const dt=clock.getDelta();
+      if(orbiting){
+        const tx=controls.target.x,tz=controls.target.z;
+        const cx=camera.position.x-tx,cz=camera.position.z-tz;
+        const newAngle=Math.atan2(cz,cx)+(maxOrbitAngle/orbitDuration)*dt;
+        const r=Math.sqrt(cx*cx+cz*cz);
+        camera.position.set(tx+Math.cos(newAngle)*r,camera.position.y,tz+Math.sin(newAngle)*r);
         camera.lookAt(controls.target);
       }
       controls.update();
-      // Gradually increase reveal uniform
-      if (material) {
-        material.uniforms.uReveal.value = Math.min(
-          clock.getElapsedTime() / revealDuration,
-          1
-        );
-      }
-      renderer.render(scene, camera);
+      if(material) material.uniforms.uReveal.value=Math.min(clock.getElapsedTime()/revealDuration,1);
+      renderer.render(scene,camera);
     }
   </script>
 </body>
